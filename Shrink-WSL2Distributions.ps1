@@ -153,44 +153,25 @@ function Show-ToastNotification {
 }
 
 function Test-WSLInstalled {
-    # Check if wsl.exe exists
-    $wslPath = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if ($wslPath) {
-        return $true
-    }
-
-    # When running as SYSTEM, wsl.exe might not be in PATH
-    # Check common locations
-    $commonPaths = @(
-        "$env:SystemRoot\System32\wsl.exe",
-        "$env:SystemRoot\SysWOW64\wsl.exe"
+    # Method 1: Check if wsl.exe exists in common locations
+    $wslPaths = @(
+        "C:\Windows\System32\wsl.exe",
+        "C:\Windows\SysWOW64\wsl.exe",
+        "$env:SystemRoot\System32\wsl.exe"
     )
 
-    foreach ($path in $commonPaths) {
-        if (Test-Path $path) {
+    foreach ($path in $wslPaths) {
+        if (Test-Path $path -ErrorAction SilentlyContinue) {
+            Write-Log "WSL found: $path"
             return $true
         }
     }
 
-    # Also check if any WSL registry entries exist (for any user)
-    $wslRegPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
-    )
-
-    foreach ($regPath in $wslRegPaths) {
-        if (Test-Path $regPath) {
-            $children = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
-            if ($children.Count -gt 0) {
-                return $true
-            }
-        }
-    }
-
-    # Check if any user has WSL installed by looking for VHDX files
-    $usersPath = Split-Path $env:USERPROFILE -Parent
-    if (Test-Path $usersPath) {
-        $vhdxFiles = Get-ChildItem -Path $usersPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Method 2: Check for VHDX files in C:\Users (hardcoded, works for SYSTEM)
+    if (Test-Path "C:\Users") {
+        $vhdxFiles = Get-ChildItem -Path "C:\Users" -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($vhdxFiles) {
+            Write-Log "VHDX found: $($vhdxFiles.FullName)"
             return $true
         }
     }
@@ -361,15 +342,17 @@ function Find-VHDXFiles {
     }
 
     # System-wide search for all users (for system context deployment)
-    if (Test-IsElevated) {
-        $usersPath = Split-Path $env:USERPROFILE -Parent
-        Get-ChildItem -Path $usersPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            $userLocalAppData = Join-Path $_.FullName "AppData\Local"
-            if (Test-Path $userLocalAppData) {
-                $searchPaths += "$userLocalAppData\Packages"
-                $searchPaths += "$userLocalAppData\Docker\wsl"
+    # Use C:\Users directly - $env:USERPROFILE is wrong for SYSTEM context
+    if (Test-IsElevated -and (Test-Path "C:\Users")) {
+        Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
+            ForEach-Object {
+                $userLocalAppData = Join-Path $_.FullName "AppData\Local"
+                if (Test-Path $userLocalAppData) {
+                    $searchPaths += "$userLocalAppData\Packages"
+                    $searchPaths += "$userLocalAppData\Docker\wsl"
+                }
             }
-        }
     }
 
     # Also check registry for custom installation paths
