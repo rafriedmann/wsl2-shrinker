@@ -38,6 +38,9 @@ WSL2 uses VHDX (Virtual Hard Disk) files that **grow automatically** as you use 
 - **Intune-ready** - Pre-packaged `.intunewin` file included
 - **Detailed logging** - Full audit trail in `C:\ProgramData\WSL2Shrinker\Logs\`
 - **Safe execution** - Gracefully handles edge cases and missing prerequisites
+- **User notifications** - Toast notifications before/after optimization
+- **Non-disruptive mode** - Option to skip if WSL is actively running
+- **Grace period** - Configurable warning time before WSL shutdown (default: 30s)
 
 ## Quick Start
 
@@ -90,9 +93,29 @@ Or build it yourself using the [Microsoft Win32 Content Prep Tool](https://githu
 
 ### Step 4: Program Settings
 
+Choose ONE of the following install command options based on your needs:
+
+#### Option A: User-Friendly Mode (Recommended)
+Shows toast notification, gives user 30 seconds warning before WSL shutdown.
+```
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shrinker.ps1
+```
+
+#### Option B: Non-Disruptive Mode
+Skips optimization if WSL is currently running. Will retry on next Intune sync.
+```
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shrinker.ps1 -SkipIfRunning
+```
+
+#### Option C: Silent Mode
+No notifications, immediate shutdown. Use for off-hours deployment.
+```
+powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shrinker.ps1 -Silent
+```
+
 | Field | Value |
 |-------|-------|
-| Install command | `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shrinker.ps1` |
+| Install command | *(Choose from options above)* |
 | Uninstall command | `powershell.exe -Command "Remove-Item 'HKLM:\SOFTWARE\WSL2Shrinker' -Force -ErrorAction SilentlyContinue"` |
 | Install behavior | **System** |
 | Device restart behavior | **No specific action** |

@@ -7,13 +7,29 @@
     the virtual disk files (ext4.vhdx) to reclaim unused space.
     Designed for deployment via Microsoft Intune.
 
+.PARAMETER LogPath
+    Path to store log files. Default: C:\ProgramData\WSL2Shrinker\Logs
+
+.PARAMETER Force
+    Force optimization even if shutdown verification fails.
+
+.PARAMETER SkipIfRunning
+    Skip optimization if WSL is currently running (non-disruptive mode).
+    Useful for Intune deployments where you don't want to interrupt users.
+
+.PARAMETER NotifyUser
+    Show Windows toast notification to user before and after optimization.
+
+.PARAMETER ShutdownGracePeriod
+    Seconds to wait after notifying user before shutting down WSL. Default: 30
+
 .NOTES
     Author: IT Admin
-    Version: 1.0
+    Version: 1.1
     Requires: Windows 10/11 with WSL2, Hyper-V PowerShell module or diskpart
 
     Intune Deployment:
-    - Install command: powershell.exe -ExecutionPolicy Bypass -File Shrink-WSL2Distributions.ps1
+    - Install command: powershell.exe -ExecutionPolicy Bypass -File Shrink-WSL2Distributions.ps1 -NotifyUser
     - Uninstall command: N/A (cleanup script)
     - Install behavior: System or User (User recommended for user-specific distros)
     - Detection: Check for log file or registry key
@@ -27,12 +43,22 @@ param(
     [string]$LogPath = "$env:ProgramData\WSL2Shrinker\Logs",
 
     [Parameter()]
-    [switch]$Force
+    [switch]$Force,
+
+    [Parameter()]
+    [switch]$SkipIfRunning,
+
+    [Parameter()]
+    [switch]$NotifyUser,
+
+    [Parameter()]
+    [int]$ShutdownGracePeriod = 30
 )
 
 # Script configuration
 $ErrorActionPreference = "Stop"
 $Script:ExitCode = 0
+$Script:SpaceSaved = 0
 
 #region Functions
 
@@ -64,6 +90,68 @@ function Write-Log {
     }
 }
 
+function Show-ToastNotification {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Title,
+
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [Parameter()]
+        [ValidateSet("Info", "Warning", "Success")]
+        [string]$Type = "Info"
+    )
+
+    try {
+        # Try BurntToast module first (if available)
+        if (Get-Module -ListAvailable -Name BurntToast -ErrorAction SilentlyContinue) {
+            Import-Module BurntToast -ErrorAction SilentlyContinue
+            New-BurntToastNotification -Text $Title, $Message -ErrorAction SilentlyContinue
+            return
+        }
+
+        # Fallback to Windows native toast notification
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+
+        $template = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">$Title</text>
+            <text id="2">$Message</text>
+        </binding>
+    </visual>
+</toast>
+"@
+
+        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xml.LoadXml($template)
+
+        $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+        $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("WSL2 Disk Shrinker")
+        $notifier.Show($toast)
+    }
+    catch {
+        # If toast fails, try balloon tip as last resort
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+            $balloon = New-Object System.Windows.Forms.NotifyIcon
+            $balloon.Icon = [System.Drawing.SystemIcons]::Information
+            $balloon.BalloonTipTitle = $Title
+            $balloon.BalloonTipText = $Message
+            $balloon.Visible = $true
+            $balloon.ShowBalloonTip(10000)
+            Start-Sleep -Seconds 1
+            $balloon.Dispose()
+        }
+        catch {
+            Write-Log "Could not display notification: $Title - $Message" -Level Warning
+        }
+    }
+}
+
 function Test-WSLInstalled {
     $wslPath = Get-Command wsl.exe -ErrorAction SilentlyContinue
     return $null -ne $wslPath
@@ -73,6 +161,20 @@ function Test-IsElevated {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-WSLRunning {
+    <#
+    .SYNOPSIS
+        Checks if any WSL distribution is currently running
+    #>
+    $distributions = Get-WSLDistributions
+    $running = $distributions | Where-Object { $_.State -eq "Running" }
+    return @{
+        IsRunning = ($null -ne $running -and $running.Count -gt 0)
+        RunningDistros = $running
+        AllDistros = $distributions
+    }
 }
 
 function Get-WSLDistributions {
@@ -193,8 +295,29 @@ function Find-VHDXFiles {
 function Stop-WSL {
     <#
     .SYNOPSIS
-        Shuts down all WSL instances
+        Shuts down all WSL instances with optional user notification
     #>
+    param(
+        [switch]$Notify,
+        [int]$GracePeriod = 30
+    )
+
+    # Check if WSL is running
+    $wslStatus = Test-WSLRunning
+
+    if ($wslStatus.IsRunning) {
+        $runningNames = ($wslStatus.RunningDistros | ForEach-Object { $_.Name }) -join ", "
+        Write-Log "WSL is currently running: $runningNames"
+
+        if ($Notify) {
+            Show-ToastNotification -Title "WSL2 Disk Optimizer" `
+                -Message "WSL will shut down in $GracePeriod seconds to optimize disk space. Running: $runningNames" `
+                -Type Warning
+
+            Write-Log "Waiting $GracePeriod seconds before shutdown (grace period)..."
+            Start-Sleep -Seconds $GracePeriod
+        }
+    }
 
     Write-Log "Shutting down WSL..."
 
@@ -204,11 +327,23 @@ function Stop-WSL {
     }
 
     # Wait for WSL to fully shut down
-    Start-Sleep -Seconds 5
+    $maxWait = 30
+    $waited = 0
+    while ($waited -lt $maxWait) {
+        Start-Sleep -Seconds 2
+        $waited += 2
 
-    # Verify shutdown
-    $runningDistros = Get-WSLDistributions | Where-Object { $_.State -eq "Running" }
-    if ($runningDistros) {
+        $stillRunning = Test-WSLRunning
+        if (-not $stillRunning.IsRunning) {
+            Write-Log "WSL shutdown complete (took $waited seconds)"
+            return $true
+        }
+        Write-Log "Waiting for WSL to shut down... ($waited/$maxWait seconds)"
+    }
+
+    # Final check
+    $finalCheck = Test-WSLRunning
+    if ($finalCheck.IsRunning) {
         Write-Log "Some distributions still running after shutdown attempt" -Level Warning
         return $false
     }
@@ -240,6 +375,7 @@ function Optimize-VHDX {
             Optimize-VHD -Path $VHDXPath -Mode Full
             $sizeAfter = (Get-Item $VHDXPath).Length
             $savedSpace = $sizeBefore - $sizeAfter
+            $Script:SpaceSaved += $savedSpace
             Write-Log "Optimization complete. New size: $([math]::Round($sizeAfter / 1GB, 2)) GB (Saved: $([math]::Round($savedSpace / 1MB, 2)) MB)"
             return $true
         }
@@ -273,6 +409,7 @@ detach vdisk
 
         $sizeAfter = (Get-Item $VHDXPath).Length
         $savedSpace = $sizeBefore - $sizeAfter
+        $Script:SpaceSaved += $savedSpace
         Write-Log "Optimization complete. New size: $([math]::Round($sizeAfter / 1GB, 2)) GB (Saved: $([math]::Round($savedSpace / 1MB, 2)) MB)"
         return $true
     }
@@ -287,6 +424,9 @@ function Set-RegistryMarker {
     .SYNOPSIS
         Sets a registry marker for Intune detection
     #>
+    param(
+        [long]$SpaceSaved = 0
+    )
 
     $regPath = "HKLM:\SOFTWARE\WSL2Shrinker"
 
@@ -296,7 +436,8 @@ function Set-RegistryMarker {
         }
 
         Set-ItemProperty -Path $regPath -Name "LastRun" -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-        Set-ItemProperty -Path $regPath -Name "Version" -Value "1.0"
+        Set-ItemProperty -Path $regPath -Name "Version" -Value "1.1"
+        Set-ItemProperty -Path $regPath -Name "LastSpaceSavedMB" -Value ([math]::Round($SpaceSaved / 1MB, 2))
 
         Write-Log "Registry marker set for Intune detection"
     }
@@ -313,6 +454,7 @@ try {
     Write-Log "========== WSL2 Disk Shrinker Started =========="
     Write-Log "Running as: $env:USERNAME"
     Write-Log "Elevated: $(Test-IsElevated)"
+    Write-Log "Parameters: Force=$Force, SkipIfRunning=$SkipIfRunning, NotifyUser=$NotifyUser"
 
     # Check if WSL is installed
     if (-not (Test-WSLInstalled)) {
@@ -327,12 +469,30 @@ try {
         # Continue anyway for user context - might have limited success
     }
 
+    # Check if WSL is running and handle SkipIfRunning mode
+    $wslStatus = Test-WSLRunning
+
+    if ($wslStatus.IsRunning -and $SkipIfRunning) {
+        $runningNames = ($wslStatus.RunningDistros | ForEach-Object { $_.Name }) -join ", "
+        Write-Log "WSL is currently running ($runningNames). SkipIfRunning is enabled - exiting without optimization." -Level Warning
+
+        if ($NotifyUser) {
+            Show-ToastNotification -Title "WSL2 Disk Optimizer - Skipped" `
+                -Message "Disk optimization skipped because WSL is in use. Will retry later." `
+                -Type Info
+        }
+
+        $Script:ExitCode = 0  # Not an error - just skipped
+        exit $Script:ExitCode
+    }
+
     # Get current distributions
     $distributions = Get-WSLDistributions
     Write-Log "Found $($distributions.Count) WSL2 distribution(s)"
 
     foreach ($distro in $distributions) {
-        Write-Log "  - $($distro.Name) (State: $($distro.State), Version: $($distro.Version))"
+        $stateIcon = if ($distro.State -eq "Running") { "[RUNNING]" } else { "[Stopped]" }
+        Write-Log "  - $($distro.Name) $stateIcon (Version: $($distro.Version))"
     }
 
     # Find all VHDX files
@@ -349,10 +509,24 @@ try {
     $totalSizeBefore = ($vhdxFiles | Measure-Object -Property SizeBefore -Sum).Sum
     Write-Log "Total VHDX size before optimization: $([math]::Round($totalSizeBefore / 1GB, 2)) GB"
 
+    # Notify user if enabled
+    if ($NotifyUser) {
+        Show-ToastNotification -Title "WSL2 Disk Optimizer Starting" `
+            -Message "Optimizing $($vhdxFiles.Count) virtual disk(s). WSL will be temporarily shut down." `
+            -Type Info
+    }
+
     # Shut down WSL
-    if (-not (Stop-WSL)) {
+    if (-not (Stop-WSL -Notify:$NotifyUser -GracePeriod $ShutdownGracePeriod)) {
         if (-not $Force) {
             Write-Log "Failed to shut down WSL. Use -Force to attempt optimization anyway." -Level Error
+
+            if ($NotifyUser) {
+                Show-ToastNotification -Title "WSL2 Disk Optimizer - Failed" `
+                    -Message "Could not shut down WSL. Optimization cancelled." `
+                    -Type Warning
+            }
+
             $Script:ExitCode = 1
             exit $Script:ExitCode
         }
@@ -392,9 +566,24 @@ try {
     Write-Log "Total size after: $([math]::Round($totalSizeAfter / 1GB, 2)) GB"
     Write-Log "Total space saved: $([math]::Round($totalSaved / 1GB, 2)) GB ($([math]::Round($totalSaved / 1MB, 2)) MB)"
 
+    # Notify user of completion
+    if ($NotifyUser) {
+        $savedGB = [math]::Round($totalSaved / 1GB, 2)
+        if ($totalSaved -gt 0) {
+            Show-ToastNotification -Title "WSL2 Disk Optimizer Complete" `
+                -Message "Optimization finished! Reclaimed $savedGB GB of disk space." `
+                -Type Success
+        }
+        else {
+            Show-ToastNotification -Title "WSL2 Disk Optimizer Complete" `
+                -Message "Optimization finished. Disks were already compact - no space reclaimed." `
+                -Type Info
+        }
+    }
+
     # Set registry marker for Intune detection
     if (Test-IsElevated) {
-        Set-RegistryMarker
+        Set-RegistryMarker -SpaceSaved $totalSaved
     }
 
     if ($failCount -gt 0 -and $successCount -eq 0) {
@@ -409,6 +598,13 @@ try {
 catch {
     Write-Log "Unexpected error: $_" -Level Error
     Write-Log $_.ScriptStackTrace -Level Error
+
+    if ($NotifyUser) {
+        Show-ToastNotification -Title "WSL2 Disk Optimizer - Error" `
+            -Message "An error occurred during optimization. Check logs for details." `
+            -Type Warning
+    }
+
     $Script:ExitCode = 1
 }
 finally {
