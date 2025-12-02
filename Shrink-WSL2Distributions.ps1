@@ -244,13 +244,21 @@ function Get-WSLDistributions {
 
     $distributions = @()
 
-    # Try wsl.exe first (works when running as user)
-    $wslExe = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if (-not $wslExe) {
-        $wslExe = "$env:SystemRoot\System32\wsl.exe"
+    # Find wsl.exe - check SysNative for 32-bit processes
+    $wslExe = $null
+    $wslPaths = @(
+        "$env:SystemRoot\System32\wsl.exe",
+        "$env:SystemRoot\SysNative\wsl.exe"
+    )
+
+    foreach ($path in $wslPaths) {
+        if (Test-Path $path -ErrorAction SilentlyContinue) {
+            $wslExe = $path
+            break
+        }
     }
 
-    if ($wslExe -and (Test-Path $wslExe -ErrorAction SilentlyContinue)) {
+    if ($wslExe) {
         $wslOutput = & $wslExe --list --verbose 2>&1
         if ($LASTEXITCODE -eq 0 -and $wslOutput) {
             # Parse WSL output (skip header line)
@@ -483,17 +491,24 @@ function Stop-WSL {
         [int]$GracePeriod = 30
     )
 
-    # Find wsl.exe
-    $wslExe = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    if (-not $wslExe) {
-        $wslExe = "$env:SystemRoot\System32\wsl.exe"
-        if (-not (Test-Path $wslExe)) {
-            Write-Log "wsl.exe not found, cannot shut down WSL" -Level Warning
-            return $true  # Continue anyway, VHDX files might still be accessible
+    # Find wsl.exe - check SysNative for 32-bit processes
+    $wslExe = $null
+    $wslPaths = @(
+        "$env:SystemRoot\System32\wsl.exe",
+        "$env:SystemRoot\SysNative\wsl.exe"
+    )
+
+    foreach ($path in $wslPaths) {
+        if (Test-Path $path -ErrorAction SilentlyContinue) {
+            $wslExe = $path
+            Write-Log "Found wsl.exe at: $wslExe"
+            break
         }
     }
-    else {
-        $wslExe = $wslExe.Source
+
+    if (-not $wslExe) {
+        Write-Log "wsl.exe not found, cannot shut down WSL" -Level Warning
+        return $true  # Continue anyway, VHDX files might still be accessible
     }
 
     # Check if WSL is running
