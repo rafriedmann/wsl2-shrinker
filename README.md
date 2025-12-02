@@ -80,8 +80,37 @@ Or build it yourself using the [Microsoft Win32 Content Prep Tool](https://githu
 | Field | Value |
 |-------|-------|
 | Name | `WSL2 Disk Shrinker` |
-| Description | `Automatically compacts WSL2 VHDX files to reclaim disk space. Runs silently and logs results.` |
+| Description | *(See below)* |
 | Publisher | `IT Department` |
+
+**Recommended Description for Intune:**
+
+```
+🐧 WSL2 Disk Optimizer
+
+Automatically reclaims unused disk space from Windows Subsystem for Linux (WSL2) virtual disks.
+
+📦 What it does:
+• Finds all WSL2 distributions on your system
+• Compacts VHDX virtual disk files to free up space
+• Typically saves 2-20 GB depending on usage
+
+⚠️ IMPORTANT:
+• WSL will be temporarily SHUT DOWN during optimization
+• Save your work in any running Linux terminals before this runs
+• You will receive a notification 30 seconds before shutdown
+• All WSL sessions will be closed automatically
+
+📋 After completion:
+• Your WSL distributions remain intact
+• All data is preserved
+• WSL restarts normally on next use
+
+📁 Logs: C:\ProgramData\WSL2Shrinker\Logs\
+```
+
+| Field | Value |
+|-------|-------|
 | App Version | `1.0` |
 | Category | `Computer Management` |
 | Information URL | `https://github.com/rafriedmann/wsl2-shrinker` |
