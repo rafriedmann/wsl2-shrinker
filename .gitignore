@@ -1,0 +1,28 @@
+# Build output
+output/
+*.intunewin
+
+# Tools
+tools/
+IntuneWinAppUtil.exe
+
+# Logs
+*.log
+Logs/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp files
+*.tmp
+*.temp

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#0078D4"/>
+
+  <!-- Compression arrows -->
+  <path d="M30 100 L60 80 L60 95 L140 95 L140 80 L170 100 L140 120 L140 105 L60 105 L60 120 Z" fill="#FFD700" opacity="0.9"/>
+
+  <!-- Squeezed Tux (Linux penguin) - comically compressed -->
+  <ellipse cx="100" cy="115" rx="25" ry="35" fill="#1a1a1a"/> <!-- Body squeezed -->
+
+  <!-- White belly - also squeezed -->
+  <ellipse cx="100" cy="120" rx="15" ry="25" fill="white"/>
+
+  <!-- Head - squished wider -->
+  <ellipse cx="100" cy="75" rx="22" ry="15" fill="#1a1a1a"/>
+
+  <!-- Eyes - wide from being squeezed -->
+  <ellipse cx="90" cy="73" rx="7" ry="5" fill="white"/>
+  <ellipse cx="110" cy="73" rx="7" ry="5" fill="white"/>
+  <circle cx="90" cy="73" r="3" fill="#1a1a1a"/>
+  <circle cx="110" cy="73" r="3" fill="#1a1a1a"/>
+
+  <!-- Sweat drops - stressed penguin -->
+  <ellipse cx="70" cy="65" rx="3" ry="5" fill="#87CEEB"/>
+  <ellipse cx="130" cy="65" rx="3" ry="5" fill="#87CEEB"/>
+
+  <!-- Beak - wide open in surprise -->
+  <ellipse cx="100" cy="82" rx="8" ry="4" fill="#FFA500"/>
+
+  <!-- Feet sticking out bottom -->
+  <ellipse cx="85" cy="155" rx="10" ry="5" fill="#FFA500"/>
+  <ellipse cx="115" cy="155" rx="10" ry="5" fill="#FFA500"/>
+
+  <!-- Little flippers sticking out sides -->
+  <ellipse cx="70" cy="110" rx="8" ry="15" fill="#1a1a1a"/>
+  <ellipse cx="130" cy="110" rx="8" ry="15" fill="#1a1a1a"/>
+
+  <!-- Stars around head - dizzy from compression -->
+  <polygon points="55,55 57,60 63,60 58,64 60,70 55,66 50,70 52,64 47,60 53,60" fill="#FFD700"/>
+  <polygon points="145,55 147,60 153,60 148,64 150,70 145,66 140,70 142,64 137,60 143,60" fill="#FFD700"/>
+</svg>
