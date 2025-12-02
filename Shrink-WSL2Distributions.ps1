@@ -380,16 +380,34 @@ function Find-VHDXFiles {
 
     # System-wide search for all users (for system context deployment)
     # Use C:\Users directly - $env:USERPROFILE is wrong for SYSTEM context
+    Write-Log "Searching for VHDX files across all users..."
     if (Test-IsElevated -and (Test-Path "C:\Users")) {
-        Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') } |
-            ForEach-Object {
-                $userLocalAppData = Join-Path $_.FullName "AppData\Local"
-                if (Test-Path $userLocalAppData) {
-                    $searchPaths += "$userLocalAppData\Packages"
-                    $searchPaths += "$userLocalAppData\Docker\wsl"
+        $userDirs = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
+
+        Write-Log "Found $($userDirs.Count) user directories to scan"
+
+        foreach ($userDir in $userDirs) {
+            $userLocalAppData = Join-Path $userDir.FullName "AppData\Local"
+            Write-Log "Checking user: $($userDir.Name) at $userLocalAppData"
+
+            if (Test-Path $userLocalAppData) {
+                $packagesPath = "$userLocalAppData\Packages"
+                $dockerPath = "$userLocalAppData\Docker\wsl"
+
+                if (Test-Path $packagesPath) {
+                    Write-Log "  Packages path exists: $packagesPath"
+                    $searchPaths += $packagesPath
+                }
+                if (Test-Path $dockerPath) {
+                    Write-Log "  Docker WSL path exists: $dockerPath"
+                    $searchPaths += $dockerPath
                 }
             }
+            else {
+                Write-Log "  AppData\Local not accessible for $($userDir.Name)" -Level Warning
+            }
+        }
     }
 
     # Also check registry for custom installation paths
@@ -418,21 +436,35 @@ function Find-VHDXFiles {
     }
 
     # Search in package directories for store-installed distributions
+    Write-Log "Searching $($searchPaths.Count) paths for ext4.vhdx files..."
     foreach ($searchPath in $searchPaths) {
+        Write-Log "  Searching: $searchPath"
         if (Test-Path $searchPath) {
-            Get-ChildItem -Path $searchPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | ForEach-Object {
-                # Avoid duplicates
-                if ($vhdxFiles.Path -notcontains $_.FullName) {
-                    $vhdxFiles += [PSCustomObject]@{
-                        Path       = $_.FullName
-                        DistroName = ($_.Directory.Parent.Name -replace 'CanonicalGroupLimited\.|\..*$', '')
-                        SizeBefore = $_.Length
+            try {
+                $found = Get-ChildItem -Path $searchPath -Recurse -Filter "ext4.vhdx" -ErrorAction Stop
+                Write-Log "    Found $($found.Count) VHDX file(s) in $searchPath"
+                foreach ($vhdx in $found) {
+                    # Avoid duplicates
+                    if ($vhdxFiles.Path -notcontains $vhdx.FullName) {
+                        Write-Log "    Adding: $($vhdx.FullName)"
+                        $vhdxFiles += [PSCustomObject]@{
+                            Path       = $vhdx.FullName
+                            DistroName = ($vhdx.Directory.Parent.Name -replace 'CanonicalGroupLimited\.|\..*$', '')
+                            SizeBefore = $vhdx.Length
+                        }
                     }
                 }
             }
+            catch {
+                Write-Log "    Error searching $searchPath : $_" -Level Warning
+            }
+        }
+        else {
+            Write-Log "    Path not accessible: $searchPath" -Level Warning
         }
     }
 
+    Write-Log "Total VHDX files found: $($vhdxFiles.Count)"
     return $vhdxFiles
 }
 
