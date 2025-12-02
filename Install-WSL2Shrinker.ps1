@@ -19,7 +19,7 @@
     - Install command: powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shrinker.ps1 -Silent
 
     Common settings:
-    - Uninstall command: cmd.exe /c "reg.exe delete HKLM\SOFTWARE\WSL2Shrinker /f 2>nul || exit /b 0"
+    - Uninstall command: cmd.exe /c exit 0
     - Install behavior: System
     - Device restart behavior: No specific action
     - Detection rules: Use custom detection script (Detect-WSL2Shrinker.ps1)

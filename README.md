@@ -145,7 +145,7 @@ powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File Install-WSL2Shr
 | Field | Value |
 |-------|-------|
 | Install command | *(Choose from options above)* |
-| Uninstall command | `cmd.exe /c "reg.exe delete HKLM\SOFTWARE\WSL2Shrinker /f 2>nul || exit /b 0"` |
+| Uninstall command | `cmd.exe /c exit 0` |
 | Install behavior | **System** |
 | Device restart behavior | **No specific action** |
 | Return codes | Use defaults (0 = Success, 1707 = Success, 3010 = Soft reboot, 1641 = Hard reboot, 1618 = Retry) |
