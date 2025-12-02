@@ -24,3 +24,5 @@ Desktop.ini
 # Temp files
 *.tmp
 *.temp
+node_modules/
+package*.json
