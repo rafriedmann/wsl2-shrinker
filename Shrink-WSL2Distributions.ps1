@@ -394,6 +394,7 @@ function Find-VHDXFiles {
             if (Test-Path $userLocalAppData) {
                 $packagesPath = "$userLocalAppData\Packages"
                 $dockerPath = "$userLocalAppData\Docker\wsl"
+                $wslPath = "$userLocalAppData\wsl"  # Non-Store WSL installations
 
                 if (Test-Path $packagesPath) {
                     Write-Log "  Packages path exists: $packagesPath"
@@ -402,6 +403,10 @@ function Find-VHDXFiles {
                 if (Test-Path $dockerPath) {
                     Write-Log "  Docker WSL path exists: $dockerPath"
                     $searchPaths += $dockerPath
+                }
+                if (Test-Path $wslPath) {
+                    Write-Log "  WSL path exists: $wslPath"
+                    $searchPaths += $wslPath
                 }
             }
             else {
