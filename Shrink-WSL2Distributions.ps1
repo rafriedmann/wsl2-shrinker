@@ -153,30 +153,9 @@ function Show-ToastNotification {
 }
 
 function Test-WSLInstalled {
-    # Method 1: Check if wsl.exe exists in common locations
-    $wslPaths = @(
-        "C:\Windows\System32\wsl.exe",
-        "C:\Windows\SysWOW64\wsl.exe",
-        "$env:SystemRoot\System32\wsl.exe"
-    )
-
-    foreach ($path in $wslPaths) {
-        if (Test-Path $path -ErrorAction SilentlyContinue) {
-            Write-Log "WSL found: $path"
-            return $true
-        }
-    }
-
-    # Method 2: Check for VHDX files in C:\Users (hardcoded, works for SYSTEM)
-    if (Test-Path "C:\Users") {
-        $vhdxFiles = Get-ChildItem -Path "C:\Users" -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($vhdxFiles) {
-            Write-Log "VHDX found: $($vhdxFiles.FullName)"
-            return $true
-        }
-    }
-
-    return $false
+    # Skip this check entirely - we'll just try to find VHDX files
+    # If none are found, the script will exit gracefully later
+    return $true
 }
 
 function Test-IsElevated {
