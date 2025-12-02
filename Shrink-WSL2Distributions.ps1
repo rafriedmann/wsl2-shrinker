@@ -153,9 +153,67 @@ function Show-ToastNotification {
 }
 
 function Test-WSLInstalled {
-    # Skip this check entirely - we'll just try to find VHDX files
-    # If none are found, the script will exit gracefully later
-    return $true
+    Write-Log "Checking if WSL is installed..."
+    Write-Log "PowerShell process: [Environment]::Is64BitProcess = $([Environment]::Is64BitProcess)"
+
+    # Check multiple possible locations for wsl.exe
+    # SysNative gives 32-bit processes access to real System32
+    $wslPaths = @(
+        "C:\Windows\System32\wsl.exe",
+        "C:\Windows\SysNative\wsl.exe"
+    )
+
+    foreach ($wslPath in $wslPaths) {
+        Write-Log "Checking: $wslPath"
+        try {
+            if (Test-Path -Path $wslPath -ErrorAction Stop) {
+                Write-Log "Found WSL at: $wslPath"
+                return $true
+            }
+        }
+        catch {
+            Write-Log "Test-Path error for $wslPath : $_" -Level Warning
+        }
+    }
+
+    # Fallback: check registry for WSL installations (works in any context)
+    Write-Log "Checking registry for WSL installations..."
+    $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
+    if (Test-Path $regPath) {
+        $distros = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
+        if ($distros) {
+            Write-Log "Found WSL registry entries: $($distros.Count) distribution(s)"
+            return $true
+        }
+    }
+
+    # Fallback: check for VHDX files in C:\Users
+    Write-Log "Checking for VHDX files in C:\Users..."
+
+    try {
+        $users = Get-ChildItem -Path "C:\Users" -Directory -ErrorAction Stop |
+                 Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
+
+        Write-Log "Found $($users.Count) user folders"
+
+        foreach ($user in $users) {
+            $packagesPath = Join-Path $user.FullName "AppData\Local\Packages"
+
+            if (Test-Path $packagesPath) {
+                $vhdx = Get-ChildItem -Path $packagesPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($vhdx) {
+                    Write-Log "VHDX found: $($vhdx.FullName)"
+                    return $true
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "VHDX search error: $_" -Level Warning
+    }
+
+    Write-Log "WSL not detected by any method"
+    return $false
 }
 
 function Test-IsElevated {
