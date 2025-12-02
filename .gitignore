@@ -1,6 +1,4 @@
-# Build output
-output/
-*.intunewin
+# Build output (keeping .intunewin for easy download)
 
 # Tools
 tools/
