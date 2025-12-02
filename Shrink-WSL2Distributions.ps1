@@ -153,8 +153,49 @@ function Show-ToastNotification {
 }
 
 function Test-WSLInstalled {
+    # Check if wsl.exe exists
     $wslPath = Get-Command wsl.exe -ErrorAction SilentlyContinue
-    return $null -ne $wslPath
+    if ($wslPath) {
+        return $true
+    }
+
+    # When running as SYSTEM, wsl.exe might not be in PATH
+    # Check common locations
+    $commonPaths = @(
+        "$env:SystemRoot\System32\wsl.exe",
+        "$env:SystemRoot\SysWOW64\wsl.exe"
+    )
+
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) {
+            return $true
+        }
+    }
+
+    # Also check if any WSL registry entries exist (for any user)
+    $wslRegPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
+    )
+
+    foreach ($regPath in $wslRegPaths) {
+        if (Test-Path $regPath) {
+            $children = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
+            if ($children.Count -gt 0) {
+                return $true
+            }
+        }
+    }
+
+    # Check if any user has WSL installed by looking for VHDX files
+    $usersPath = Split-Path $env:USERPROFILE -Parent
+    if (Test-Path $usersPath) {
+        $vhdxFiles = Get-ChildItem -Path $usersPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($vhdxFiles) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Test-IsElevated {
@@ -185,33 +226,116 @@ function Get-WSLDistributions {
 
     $distributions = @()
 
-    # Get list of distributions from WSL
-    $wslOutput = wsl.exe --list --verbose 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "Failed to get WSL distributions list" -Level Warning
-        return $distributions
+    # Try wsl.exe first (works when running as user)
+    $wslExe = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if (-not $wslExe) {
+        $wslExe = "$env:SystemRoot\System32\wsl.exe"
     }
 
-    # Parse WSL output (skip header line)
-    $lines = $wslOutput -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -Skip 1
+    if ($wslExe -and (Test-Path $wslExe -ErrorAction SilentlyContinue)) {
+        $wslOutput = & $wslExe --list --verbose 2>&1
+        if ($LASTEXITCODE -eq 0 -and $wslOutput) {
+            # Parse WSL output (skip header line)
+            $lines = $wslOutput -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -Skip 1
 
-    foreach ($line in $lines) {
-        # Remove default marker (*) and parse
-        $cleanLine = $line -replace '^\s*\*?\s*', ''
-        $parts = $cleanLine -split '\s+' | Where-Object { $_ }
+            foreach ($line in $lines) {
+                # Remove default marker (*) and parse
+                $cleanLine = $line -replace '^\s*\*?\s*', ''
+                $parts = $cleanLine -split '\s+' | Where-Object { $_ }
 
-        if ($parts.Count -ge 2) {
-            $distroName = $parts[0]
-            $state = $parts[1]
-            $version = if ($parts.Count -ge 3) { $parts[2] } else { "Unknown" }
+                if ($parts.Count -ge 2) {
+                    $distroName = $parts[0]
+                    $state = $parts[1]
+                    $version = if ($parts.Count -ge 3) { $parts[2] } else { "Unknown" }
 
-            # Only process WSL2 distributions
-            if ($version -eq "2") {
-                $distributions += [PSCustomObject]@{
-                    Name    = $distroName
-                    State   = $state
-                    Version = $version
+                    # Only process WSL2 distributions
+                    if ($version -eq "2") {
+                        $distributions += [PSCustomObject]@{
+                            Name    = $distroName
+                            State   = $state
+                            Version = $version
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    # If running as SYSTEM and no distributions found via wsl.exe,
+    # try to get info from registry (all users)
+    if ($distributions.Count -eq 0) {
+        Write-Log "WSL command not available or returned no results, scanning registry..."
+
+        # Scan HKLM for WSL distributions
+        $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
+        if (Test-Path $regPath) {
+            Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue | ForEach-Object {
+                $distroName = (Get-ItemProperty -Path $_.PSPath -Name DistributionName -ErrorAction SilentlyContinue).DistributionName
+                $version = (Get-ItemProperty -Path $_.PSPath -Name Version -ErrorAction SilentlyContinue).Version
+
+                if ($distroName -and $version -eq 2) {
+                    $distributions += [PSCustomObject]@{
+                        Name    = $distroName
+                        State   = "Unknown"  # Can't determine state without wsl.exe
+                        Version = "2"
+                    }
+                }
+            }
+        }
+
+        # Also scan each user's registry hive
+        $usersPath = Split-Path $env:USERPROFILE -Parent
+        Get-ChildItem -Path $usersPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            $ntUserDat = Join-Path $_.FullName "NTUSER.DAT"
+            $userName = $_.Name
+
+            # Try to load user hive if not already loaded
+            $hivePath = "HKU:\$userName-WSLCheck"
+            $hiveLoaded = $false
+
+            try {
+                if (Test-Path $ntUserDat) {
+                    $null = reg load "HKU\$userName-WSLCheck" $ntUserDat 2>&1
+                    $hiveLoaded = $true
+                }
+            }
+            catch {
+                # Hive might already be loaded or inaccessible
+            }
+
+            # Check both potentially loaded hive and standard HKU paths
+            $userRegPaths = @(
+                "Registry::HKU\$userName-WSLCheck\Software\Microsoft\Windows\CurrentVersion\Lxss",
+                "Registry::HKU\.DEFAULT\Software\Microsoft\Windows\CurrentVersion\Lxss"
+            )
+
+            foreach ($userRegPath in $userRegPaths) {
+                if (Test-Path $userRegPath -ErrorAction SilentlyContinue) {
+                    Get-ChildItem -Path $userRegPath -ErrorAction SilentlyContinue | ForEach-Object {
+                        $distroName = (Get-ItemProperty -Path $_.PSPath -Name DistributionName -ErrorAction SilentlyContinue).DistributionName
+                        $version = (Get-ItemProperty -Path $_.PSPath -Name Version -ErrorAction SilentlyContinue).Version
+
+                        if ($distroName -and $version -eq 2) {
+                            # Avoid duplicates
+                            if ($distributions.Name -notcontains $distroName) {
+                                $distributions += [PSCustomObject]@{
+                                    Name    = $distroName
+                                    State   = "Unknown"
+                                    Version = "2"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            # Unload hive if we loaded it
+            if ($hiveLoaded) {
+                try {
+                    [gc]::Collect()
+                    $null = reg unload "HKU\$userName-WSLCheck" 2>&1
+                }
+                catch { }
             }
         }
     }
@@ -302,6 +426,19 @@ function Stop-WSL {
         [int]$GracePeriod = 30
     )
 
+    # Find wsl.exe
+    $wslExe = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if (-not $wslExe) {
+        $wslExe = "$env:SystemRoot\System32\wsl.exe"
+        if (-not (Test-Path $wslExe)) {
+            Write-Log "wsl.exe not found, cannot shut down WSL" -Level Warning
+            return $true  # Continue anyway, VHDX files might still be accessible
+        }
+    }
+    else {
+        $wslExe = $wslExe.Source
+    }
+
     # Check if WSL is running
     $wslStatus = Test-WSLRunning
 
@@ -319,9 +456,9 @@ function Stop-WSL {
         }
     }
 
-    Write-Log "Shutting down WSL..."
+    Write-Log "Shutting down WSL using: $wslExe"
 
-    $result = wsl.exe --shutdown 2>&1
+    $result = & $wslExe --shutdown 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Warning during WSL shutdown: $result" -Level Warning
     }
