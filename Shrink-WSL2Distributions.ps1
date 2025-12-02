@@ -153,76 +153,48 @@ function Show-ToastNotification {
 }
 
 function Test-WSLInstalled {
-    # Method 1: Check if wsl.exe exists in PATH
+    # Check if wsl.exe exists
     $wslPath = Get-Command wsl.exe -ErrorAction SilentlyContinue
     if ($wslPath) {
-        Write-Log "WSL found via PATH: $($wslPath.Source)"
         return $true
     }
 
-    # Method 2: Check common locations (for SYSTEM context)
+    # When running as SYSTEM, wsl.exe might not be in PATH
+    # Check common locations
     $commonPaths = @(
         "$env:SystemRoot\System32\wsl.exe",
-        "$env:SystemRoot\SysWOW64\wsl.exe",
-        "C:\Windows\System32\wsl.exe"
+        "$env:SystemRoot\SysWOW64\wsl.exe"
     )
 
     foreach ($path in $commonPaths) {
-        if (Test-Path $path -ErrorAction SilentlyContinue) {
-            Write-Log "WSL found at: $path"
+        if (Test-Path $path) {
             return $true
         }
     }
 
-    # Method 3: Check Windows Optional Features
-    $wslFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue
-    if ($wslFeature -and $wslFeature.State -eq "Enabled") {
-        Write-Log "WSL feature is enabled"
-        return $true
-    }
-
-    # Method 4: Check registry for WSL installations
-    $regPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss",
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModel\StateRepository\Cache\Package\Data"
+    # Also check if any WSL registry entries exist (for any user)
+    $wslRegPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
     )
 
-    foreach ($regPath in $regPaths) {
-        if (Test-Path $regPath -ErrorAction SilentlyContinue) {
-            $items = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
-            if ($items.Count -gt 0) {
-                Write-Log "WSL registry entries found at: $regPath"
+    foreach ($regPath in $wslRegPaths) {
+        if (Test-Path $regPath) {
+            $children = Get-ChildItem -Path $regPath -ErrorAction SilentlyContinue
+            if ($children.Count -gt 0) {
                 return $true
             }
         }
     }
 
-    # Method 5: Check for VHDX files in all user profiles (most reliable for SYSTEM)
-    $usersFolder = "C:\Users"
-    if (Test-Path $usersFolder) {
-        Write-Log "Scanning for VHDX files in $usersFolder..."
-        $userDirs = Get-ChildItem -Path $usersFolder -Directory -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') }
-
-        foreach ($userDir in $userDirs) {
-            $searchPaths = @(
-                (Join-Path $userDir.FullName "AppData\Local\Packages"),
-                (Join-Path $userDir.FullName "AppData\Local\Docker\wsl")
-            )
-
-            foreach ($searchPath in $searchPaths) {
-                if (Test-Path $searchPath -ErrorAction SilentlyContinue) {
-                    $vhdx = Get-ChildItem -Path $searchPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
-                    if ($vhdx) {
-                        Write-Log "VHDX found: $($vhdx.FullName)"
-                        return $true
-                    }
-                }
-            }
+    # Check if any user has WSL installed by looking for VHDX files
+    $usersPath = Split-Path $env:USERPROFILE -Parent
+    if (Test-Path $usersPath) {
+        $vhdxFiles = Get-ChildItem -Path $usersPath -Recurse -Filter "ext4.vhdx" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($vhdxFiles) {
+            return $true
         }
     }
 
-    Write-Log "No WSL installation detected"
     return $false
 }
 
